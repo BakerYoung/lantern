@@ -2,7 +2,6 @@ package util
 
 import (
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getlantern/errlog"
 	"github.com/getlantern/eventual"
 	"github.com/getlantern/fronted"
 	"github.com/getlantern/golog"
@@ -24,7 +24,8 @@ const (
 )
 
 var (
-	log = golog.LoggerFor("flashlight.util")
+	log  = golog.LoggerFor("flashlight.util")
+	elog = errlog.ErrorLoggerFor("flashlight.util")
 )
 
 // HTTPFetcher is a simple interface for types that are able to fetch data over HTTP.
@@ -85,7 +86,7 @@ type chainedFetcher struct {
 func (cf *chainedFetcher) Do(req *http.Request) (*http.Response, error) {
 	log.Debugf("Using chained fronter")
 	if client, err := HTTPClient("", cf.proxyAddrFN); err != nil {
-		log.Errorf("Could not create HTTP client: %v", err)
+		elog.Log(err, errlog.WithOp("create-http-client"))
 		return nil, err
 	} else {
 		return client.Do(req)
@@ -120,7 +121,7 @@ func (df *dualFetcher) do(req *http.Request, chainedFunc func(*http.Request) (*h
 	req.Header.Del("Lantern-Fronted-URL")
 
 	if frontedURL == "" {
-		return nil, errors.New("Callers MUST specify the fronted URL in the Lantern-Fronted-URL header")
+		return nil, fmt.Errorf("Callers MUST specify the fronted URL in the Lantern-Fronted-URL header")
 	}
 
 	// Make a copy of the original requeest headers to include in the fronted
@@ -143,7 +144,12 @@ func (df *dualFetcher) do(req *http.Request, chainedFunc func(*http.Request) (*h
 
 	request := func(clientFunc func(*http.Request) (*http.Response, error), req *http.Request) error {
 		if resp, err := clientFunc(req); err != nil {
-			log.Errorf("Could not complete request with: %v, %v", frontedURL, err)
+			elog.Log(err,
+				errlog.WithOp("send-http-client"),
+				errlog.WithProxy(&errlog.ProxyingInfo{
+					ProxyType:  errlog.DirectFrontedProxy,
+					OriginSite: frontedURL,
+				}))
 			errs <- err
 			return err
 		} else {
@@ -166,14 +172,24 @@ func (df *dualFetcher) do(req *http.Request, chainedFunc func(*http.Request) (*h
 
 	go func() {
 		if frontedReq, err := http.NewRequest("GET", frontedURL, nil); err != nil {
-			log.Errorf("Could not create request for: %v, %v", frontedURL, err)
+			elog.Log(err,
+				errlog.WithOp("create-http-request"),
+				errlog.WithProxy(&errlog.ProxyingInfo{
+					ProxyType:  errlog.DirectFrontedProxy,
+					OriginSite: frontedURL,
+				}))
 			errs <- err
 		} else {
 			log.Debug("Sending request via DDF")
 			frontedReq.Header = headersCopy
 
 			if err := request(ddfFunc, frontedReq); err != nil {
-				log.Errorf("Fronted request failed: %v", err)
+				elog.Log(err,
+					errlog.WithOp("request"),
+					errlog.WithProxy(&errlog.ProxyingInfo{
+						ProxyType:  errlog.DirectFrontedProxy,
+						OriginSite: frontedURL,
+					}))
 			} else {
 				log.Debug("Fronted request succeeded")
 			}
@@ -187,7 +203,11 @@ func (df *dualFetcher) do(req *http.Request, chainedFunc func(*http.Request) (*h
 		go func() {
 			log.Debug("Sending chained request")
 			if err := request(chainedFunc, req); err != nil {
-				log.Errorf("Chained request failed %v", err)
+				elog.Log(err,
+					errlog.WithOp("request"),
+					errlog.WithProxy(&errlog.ProxyingInfo{
+						ProxyType: errlog.ChainedProxy,
+					}))
 			} else {
 				log.Debug("Switching to chained fronter for future requests since it succeeded")
 				df.cf.setFetcher(&chainedFetcher{df.cf.proxyAddrFN})
@@ -307,7 +327,10 @@ func httpClient(rootCA string, proxyAddrFN eventual.Getter, persistent bool) (*h
 			// Instead of finishing here we just log the error and continue, the client
 			// we are going to create will surely fail when used and return errors,
 			// those errors should be handled by the code that depends on such client.
-			log.Errorf("Proxy never came online")
+			elog.Log(fmt.Errorf("Proxy never came online"),
+				errlog.WithProxy(&errlog.ProxyingInfo{
+					ProxyType: errlog.ChainedProxy,
+				}))
 		}
 		log.Debugf("Connected to proxy")
 
@@ -315,7 +338,7 @@ func httpClient(rootCA string, proxyAddrFN eventual.Getter, persistent bool) (*h
 			return url.Parse("http://" + proxyAddr.(string))
 		}
 	} else {
-		log.Errorf("Using direct http client with no proxyAddr")
+		elog.Log(fmt.Errorf("Using direct http client with no proxyAddr"))
 	}
 	return &http.Client{Transport: tr}, nil
 }
