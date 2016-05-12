@@ -160,7 +160,7 @@ func trackSession(args string, proxyAddrFN eventual.Getter) {
 	r, err := http.NewRequest("POST", endpoint, bytes.NewBufferString(args))
 
 	if err != nil {
-		errors.Wrap(err).Report()
+		errors.Report(err)
 		return
 	}
 
@@ -176,12 +176,12 @@ func trackSession(args string, proxyAddrFN eventual.Getter) {
 	var httpClient *http.Client
 	httpClient, err = util.HTTPClient("", proxyAddrFN)
 	if err != nil {
-		errors.Wrap(err).Report()
+		errors.Report(err)
 		return
 	}
 	resp, err := httpClient.Do(r)
 	if err != nil {
-		errors.Wrap(err).Report()
+		errors.Report(err)
 		return
 	}
 	log.Debugf("Successfully sent request to GA: %s", resp.Status)
