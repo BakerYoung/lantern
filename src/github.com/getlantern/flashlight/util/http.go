@@ -85,9 +85,8 @@ type chainedFetcher struct {
 func (cf *chainedFetcher) Do(req *http.Request) (*http.Response, error) {
 	log.Debugf("Using chained fronter")
 	if client, err := HTTPClient("", cf.proxyAddrFN); err != nil {
-		e := errors.Wrap(err).WithOp("create-http-client")
-		e.Report()
-		return nil, e
+		errors.Wrap(err).WithOp("create-http-client").Report()
+		return nil, err
 	} else {
 		return client.Do(req)
 	}
@@ -144,11 +143,10 @@ func (df *dualFetcher) do(req *http.Request, chainedFunc func(*http.Request) (*h
 
 	request := func(clientFunc func(*http.Request) (*http.Response, error), req *http.Request) error {
 		if resp, err := clientFunc(req); err != nil {
-			e := errors.Wrap(err).WithOp("send-http-client").
-				ProxyType(errors.DDF).OriginSite(frontedURL)
-			e.Report()
-			errs <- e
-			return e
+			errors.Wrap(err).WithOp("send-http-client").
+				ProxyType(errors.DDF).OriginSite(frontedURL).Report()
+			errs <- err
+			return err
 		} else {
 			if success(resp) {
 				log.Debugf("Got successful HTTP call!")
@@ -169,10 +167,9 @@ func (df *dualFetcher) do(req *http.Request, chainedFunc func(*http.Request) (*h
 
 	go func() {
 		if frontedReq, err := http.NewRequest("GET", frontedURL, nil); err != nil {
-			e := errors.Wrap(err).WithOp("create-http-request").
-				ProxyType(errors.DDF).OriginSite(frontedURL)
-			e.Report()
-			errs <- e
+			errors.Wrap(err).WithOp("create-http-request").
+				ProxyType(errors.DDF).OriginSite(frontedURL).Report()
+			errs <- err
 		} else {
 			log.Debug("Sending request via DDF")
 			frontedReq.Header = headersCopy
