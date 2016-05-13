@@ -121,7 +121,7 @@ func (df *dualFetcher) do(req *http.Request, chainedFunc func(*http.Request) (*h
 	req.Header.Del("Lantern-Fronted-URL")
 
 	if frontedURL == "" {
-		return nil, fmt.Errorf("Callers MUST specify the fronted URL in the Lantern-Fronted-URL header")
+		return nil, errors.New("Callers MUST specify the fronted URL in the Lantern-Fronted-URL header")
 	}
 
 	// Make a copy of the original requeest headers to include in the fronted
@@ -145,7 +145,7 @@ func (df *dualFetcher) do(req *http.Request, chainedFunc func(*http.Request) (*h
 	request := func(clientFunc func(*http.Request) (*http.Response, error), req *http.Request) error {
 		if resp, err := clientFunc(req); err != nil {
 			e := errors.Wrap(err).WithOp("send-http-client").
-				ProxyType(errors.DDF).OriginSite(frontedUrl)
+				ProxyType(errors.DDF).OriginSite(frontedURL)
 			e.Report()
 			errs <- e
 			return e
@@ -193,9 +193,8 @@ func (df *dualFetcher) do(req *http.Request, chainedFunc func(*http.Request) (*h
 		go func() {
 			log.Debug("Sending chained request")
 			if err := request(chainedFunc, req); err != nil {
-				e := errors.Wrap(err).WithOp("send-http-request").
-					ProxyType(errors.ChainedProxy)
-				e.Report()
+				errors.Wrap(err).WithOp("send-http-request").
+					ProxyType(errors.ChainedProxy).Report()
 			} else {
 				log.Debug("Switching to chained fronter for future requests since it succeeded")
 				df.cf.setFetcher(&chainedFetcher{df.cf.proxyAddrFN})
@@ -315,8 +314,7 @@ func httpClient(rootCA string, proxyAddrFN eventual.Getter, persistent bool) (*h
 			// Instead of finishing here we just log the error and continue, the client
 			// we are going to create will surely fail when used and return errors,
 			// those errors should be handled by the code that depends on such client.
-			e := errors.New("Proxy never came online").ProxyType(errors.ChainedProxy)
-			e.Report()
+			errors.New("Proxy never came online").ProxyType(errors.ChainedProxy).Report()
 		}
 		log.Debugf("Connected to proxy")
 
